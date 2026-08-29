@@ -1,5 +1,5 @@
 {
-  "id": "wing_bird_v1",
+  "id": "wing_bird",
   "textureFile": "wing_bird.png",
   "sculpt": true,
   "attachOnRight": false,

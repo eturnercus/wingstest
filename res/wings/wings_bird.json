@@ -1,0 +1,8 @@
+{
+  "id": "wing_bird_v1",
+  "textureFile": "wing_bird.png",
+  "sculpt": true,
+  "attachOnRight": false,
+  "targetHeight": 20.0,
+  "perPixel": false
+}

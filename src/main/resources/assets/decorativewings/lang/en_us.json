@@ -1,0 +1,10 @@
+{
+  "commands.decorativewings.usage": "Usage: /wings give <player> [sprite|model|insect|bird|sprite_v1|model_v1|insect_v1|bird_v1]  or  /wings remove <player>. First-person: /wingsfp on|off",
+  "commands.decorativewings.unknown": "Unknown wing type '%s'. Use sprite, model, insect, bird, or *_v1.",
+  "commands.decorativewings.give": "Gave %2$s wings to %1$s.",
+  "commands.decorativewings.already": "%s already has %s wings.",
+  "commands.decorativewings.remove": "Removed decorative wings from %s.",
+  "commands.decorativewings.none": "%s does not have decorative wings.",
+  "commands.decorativewings.firstperson.on": "Wings are visible in first person.",
+  "commands.decorativewings.firstperson.off": "Wings are hidden in first person."
+}

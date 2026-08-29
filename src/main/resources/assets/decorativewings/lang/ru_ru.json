@@ -1,0 +1,10 @@
+{
+  "commands.decorativewings.usage": "Использование: /wings give <ник> [sprite|model|insect|bird|sprite_v1|model_v1|insect_v1|bird_v1]  или  /wings remove <ник>. От первого лица: /wingsfp on|off",
+  "commands.decorativewings.unknown": "Неизвестный тип '%s'. Нужно sprite, model, insect, bird или *_v1.",
+  "commands.decorativewings.give": "Крылья %2$s выданы игроку %1$s.",
+  "commands.decorativewings.already": "У игрока %s уже стоят крылья %s.",
+  "commands.decorativewings.remove": "Крылья сняты с игрока %s.",
+  "commands.decorativewings.none": "У игрока %s нет крыльев.",
+  "commands.decorativewings.firstperson.on": "Крылья видны от первого лица.",
+  "commands.decorativewings.firstperson.off": "Крылья скрыты от первого лица."
+}

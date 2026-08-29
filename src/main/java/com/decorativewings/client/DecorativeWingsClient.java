@@ -33,6 +33,7 @@ public final class DecorativeWingsClient {
 
     private static void onReload(RegisterClientReloadListenersEvent event) {
         event.registerReloadListener((ResourceManagerReloadListener) manager -> {
+            com.decorativewings.client.AnimationParser.load();
             WingVoxelMesh.invalidate();
             WingFbxMesh.invalidate();
         });

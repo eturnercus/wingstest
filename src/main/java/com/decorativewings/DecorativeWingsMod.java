@@ -4,6 +4,9 @@ import com.decorativewings.attachment.ModAttachments;
 import com.decorativewings.client.DecorativeWingsClient;
 import com.decorativewings.command.WingsCommands;
 import com.decorativewings.network.WingsSyncPayload;
+import com.decorativewings.client.DecorativeWingsClient;
+import com.decorativewings.client.AnimationParser;
+import com.decorativewings.command.WingsCommands;
 import com.mojang.logging.LogUtils;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
@@ -30,6 +33,7 @@ public class DecorativeWingsMod {
         NeoForge.EVENT_BUS.addListener(DecorativeWingsMod::onRespawn);
         NeoForge.EVENT_BUS.addListener(DecorativeWingsMod::onChangedDimension);
         if (FMLEnvironment.dist == Dist.CLIENT) {
+            AnimationParser.load();
             DecorativeWingsClient.register(modBus);
         }
     }

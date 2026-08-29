@@ -1,6 +1,8 @@
 package com.decorativewings.client;
 
 import com.decorativewings.DecorativeWingsMod;
+import com.google.gson.Gson;
+import com.google.gson.JsonSyntaxException;
 import com.mojang.blaze3d.platform.NativeImage;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
@@ -8,40 +10,32 @@ import net.minecraft.server.packs.resources.Resource;
 import net.minecraft.util.FastColor;
 import net.minecraft.util.Mth;
 
-import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.io.*;
+import java.nio.file.Files;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
- * Builds wings from a 2D sprite. Pivot is the attach-edge centre so the root sits on the shoulders.
+ * Builds wings from a 2D sprite. Now supports dynamic loading from JSON definitions.
  */
 public final class WingVoxelMesh {
-    public static final ResourceLocation TEXTURE =
-            ResourceLocation.fromNamespaceAndPath(DecorativeWingsMod.MOD_ID, "textures/entity/wing.png");
-    public static final ResourceLocation TEXTURE_INSECT =
-            ResourceLocation.fromNamespaceAndPath(DecorativeWingsMod.MOD_ID, "textures/entity/wing_insect.png");
-    public static final ResourceLocation TEXTURE_BIRD =
-            ResourceLocation.fromNamespaceAndPath(DecorativeWingsMod.MOD_ID, "textures/entity/wing_bird.png");
+    public static final File CONFIG_WINGS_DIR = new File("config/decorativewings/wings/");
+    public static final File CONFIG_TEXTURES_DIR = new File("config/decorativewings/textures/");
+    private static final Gson GSON = new Gson();
 
     public record Cube(float x0, float y0, float z0, float x1, float y1, float z1,
-                       float u0, float v0, float u1, float v1) {
-    }
+                       float u0, float v0, float u1, float v1) {}
 
     public record Side(List<Cube> inner, List<Cube> mid, List<Cube> outer,
                        float innerWidth, float midWidth, float outerWidth, float height) {
-        public int cubeCount() {
-            return inner.size() + mid.size() + outer.size();
-        }
+        public int cubeCount() { return inner.size() + mid.size() + outer.size(); }
     }
 
     private record Spec(ResourceLocation texture, boolean sculpt, boolean attachOnRight, float targetHeight,
-                        boolean perPixel) {
-    }
+                        boolean perPixel) {}
 
     private static final Map<Spec, WingVoxelMesh> CACHE = new HashMap<>();
+    private static final Map<String, WingDefinition> DEFINITIONS = new HashMap<>();
 
     public final Side left;
     public final Side right;
@@ -57,41 +51,74 @@ public final class WingVoxelMesh {
         this.pivotY = pivotY;
     }
 
+    /**
+     * Scans the config/decorativewings/wings/ folder for JSON definitions.
+     * Call this during mod initialization or when reloading config.
+     */
+    public static void loadDefinitions() {
+        DEFINITIONS.clear();
+        if (!CONFIG_WINGS_DIR.exists()) {
+            CONFIG_WINGS_DIR.mkdirs();
+            CONFIG_TEXTURES_DIR.mkdirs();
+        }
+
+        File[] files = CONFIG_WINGS_DIR.listFiles((dir, name) -> name.toLowerCase().endsWith(".json"));
+        if (files != null) {
+            for (File file : files) {
+                try (Reader reader = new FileReader(file)) {
+                    WingDefinition def = GSON.fromJson(reader, WingDefinition.class);
+                    if (def != null && def.id() != null) {
+                        DEFINITIONS.put(def.id(), def);
+                    }
+                } catch (IOException | JsonSyntaxException e) {
+                    DecorativeWingsMod.LOGGER.error("Failed to load wing definition from {}: {}", file.getName(), e.getMessage());
+                }
+            }
+        }
+    }
+
+    public static List<String> getAvailableWingIds() {
+        return new ArrayList<>(DEFINITIONS.keySet());
+    }
+
+    public static WingVoxelMesh getById(String id) {
+        WingDefinition def = DEFINITIONS.get(id);
+        if (def == null) {
+            DecorativeWingsMod.LOGGER.error("Wing definition not found for id: {}", id);
+            return empty();
+        }
+
+        // We use a ResourceLocation as a key for the cache, mapping it to the texture file name
+        ResourceLocation loc = ResourceLocation.fromNamespaceAndPath(DecorativeWingsMod.MOD_ID, "dynamic/" + def.textureFile());
+        return get(loc, def.sculpt(), def.attachOnRight(), def.targetHeight(), def.perPixel());
+    }
+
     public static void invalidate() {
         CACHE.clear();
-    }
-
-    public static WingVoxelMesh get() {
-        return get(TEXTURE, false, true, 15.0F, false);
-    }
-
-    public static WingVoxelMesh pixels() {
-        return get(TEXTURE, false, true, 15.0F, true);
-    }
-
-    public static WingVoxelMesh insect() {
-        return get(TEXTURE_INSECT, true, false, 15.0F, true);
-    }
-
-    public static WingVoxelMesh bird() {
-        return get(TEXTURE_BIRD, true, false, 15.0F, true);
+        DEFINITIONS.clear();
     }
 
     public static WingVoxelMesh get(ResourceLocation texture, boolean sculpt, boolean attachOnRight,
                                     float targetHeight, boolean perPixel) {
         Spec spec = new Spec(texture, sculpt, attachOnRight, targetHeight, perPixel);
-        WingVoxelMesh mesh = CACHE.get(spec);
-        if (mesh == null) {
-            mesh = build(spec);
-            CACHE.put(spec, mesh);
-        }
-        return mesh;
+        return CACHE.computeIfAbsent(spec, WingVoxelMesh::build);
     }
 
     private static WingVoxelMesh build(Spec spec) {
+        String fileName = spec.texture().getPath().substring(spec.texture().getPath().lastIndexOf('/') + 1);
+        File configFile = new File(CONFIG_TEXTURES_DIR, fileName);
+
+        if (configFile.exists()) {
+            try (InputStream stream = new FileInputStream(configFile); NativeImage image = NativeImage.read(stream)) {
+                return voxelize(image, spec);
+            } catch (IOException exception) {
+                DecorativeWingsMod.LOGGER.error("Failed to load wing texture from config: {}", fileName, exception);
+            }
+        }
+
         Optional<Resource> resource = Minecraft.getInstance().getResourceManager().getResource(spec.texture());
         if (resource.isEmpty()) {
-            DecorativeWingsMod.LOGGER.error("Missing wing texture {}", spec.texture());
+            DecorativeWingsMod.LOGGER.error("Missing wing texture {} and no config override found", spec.texture());
             return empty();
         }
         try (InputStream stream = resource.get().open(); NativeImage image = NativeImage.read(stream)) {
@@ -112,10 +139,8 @@ public final class WingVoxelMesh {
         int height = image.getHeight();
         boolean[][] opaque = new boolean[height][width];
         int[][] lum = new int[height][width];
-        int minX = width;
-        int minY = height;
-        int maxX = -1;
-        int maxY = -1;
+        int minX = width, minY = height, maxX = -1, maxY = -1;
+
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
                 int pixel = image.getPixelRGBA(x, y);
@@ -132,10 +157,8 @@ public final class WingVoxelMesh {
                 }
             }
         }
-        if (maxX < 0) {
-            DecorativeWingsMod.LOGGER.error("Wing texture has no opaque pixels");
-            return empty();
-        }
+
+        if (maxX < 0) return empty();
 
         int boxW = maxX - minX + 1;
         int boxH = maxY - minY + 1;
@@ -155,53 +178,26 @@ public final class WingVoxelMesh {
         }
         float pivotY = (pivotCount == 0 ? boxH * 0.35F : pivotSum / pivotCount) * scale;
 
-        List<Cube> leftInner = new ArrayList<>();
-        List<Cube> leftMid = new ArrayList<>();
-        List<Cube> leftOuter = new ArrayList<>();
-        List<Cube> rightInner = new ArrayList<>();
-        List<Cube> rightMid = new ArrayList<>();
-        List<Cube> rightOuter = new ArrayList<>();
+        List<Cube> leftInner = new ArrayList<>(), leftMid = new ArrayList<>(), leftOuter = new ArrayList<>();
+        List<Cube> rightInner = new ArrayList<>(), rightMid = new ArrayList<>(), rightOuter = new ArrayList<>();
 
         if (spec.sculpt()) {
             for (int y = minY; y <= maxY; y++) {
                 for (int x = minX; x <= maxX; x++) {
-                    if (!opaque[y][x]) {
-                        continue;
-                    }
-                    float dist = attachOnRight
-                            ? (maxX + 0.5F) - (x + 0.5F)
-                            : (x + 0.5F) - (minX + 0.5F);
+                    if (!opaque[y][x]) continue;
+                    float dist = attachOnRight ? (maxX + 0.5F) - (x + 0.5F) : (x + 0.5F) - (minX + 0.5F);
                     float spanT = Mth.clamp(dist / (float) boxW, 0.0F, 1.0F);
                     float chordT = Mth.clamp((y + 0.5F - minY) / (float) boxH, 0.0F, 1.0F);
-                    boolean rib = lum[y][x] < 48;
-                    boolean dark = lum[y][x] < 92;
+                    boolean rib = lum[y][x] < 48, dark = lum[y][x] < 92;
                     int open = 0;
-                    if (x == minX || !opaque[y][x - 1]) {
-                        open++;
-                    }
-                    if (x == maxX || !opaque[y][x + 1]) {
-                        open++;
-                    }
-                    if (y == minY || !opaque[y - 1][x]) {
-                        open++;
-                    }
-                    if (y == maxY || !opaque[y + 1][x]) {
-                        open++;
-                    }
-                    float thick;
-                    if (rib) {
-                        thick = 2.20F;
-                    } else if (dark) {
-                        thick = 1.45F;
-                    } else if (open > 0) {
-                        thick = 1.05F;
-                    } else {
-                        thick = 0.70F + (1.0F - chordT) * 0.40F;
-                    }
-                    float camber = spanT * spanT * 3.4F + Mth.sin(spanT * Mth.PI) * 2.1F + chordT * 0.70F;
-                    if (rib) {
-                        camber += 0.55F;
-                    }
+                    if (x == minX || !opaque[y][x - 1]) open++;
+                    if (x == maxX || !opaque[y][x + 1]) open++;
+                    if (y == minY || !opaque[y - 1][x]) open++;
+                    if (y == maxY || !opaque[y + 1][x]) open++;
+
+                    float thick = rib ? 2.20F : dark ? 1.45F : open > 0 ? 1.05F : 0.70F + (1.0F - chordT) * 0.40F;
+                    float camber = spanT * spanT * 3.4F + Mth.sin(spanT * Mth.PI) * 2.1F + chordT * 0.70F + (rib ? 0.55F : 0);
+
                     addCube(leftInner, leftMid, leftOuter, rightInner, rightMid, rightOuter,
                             x, y, 1, 1, width, height, minY, minX, maxX, scale, innerEnd, midEnd,
                             attachOnRight, camber - thick * 0.5F, camber + thick * 0.5F);
@@ -211,9 +207,7 @@ public final class WingVoxelMesh {
             float thickness = 0.16F;
             for (int y = minY; y <= maxY; y++) {
                 for (int x = minX; x <= maxX; x++) {
-                    if (!opaque[y][x]) {
-                        continue;
-                    }
+                    if (!opaque[y][x]) continue;
                     addCube(leftInner, leftMid, leftOuter, rightInner, rightMid, rightOuter,
                             x, y, 1, 1, width, height, minY, minX, maxX, scale, innerEnd, midEnd,
                             attachOnRight, -thickness * 0.5F, thickness * 0.5F);
@@ -228,16 +222,11 @@ public final class WingVoxelMesh {
             }
         }
 
-        float innerW = innerEnd * scale;
-        float midW = (midEnd - innerEnd) * scale;
-        float outerW = (boxW - midEnd) * scale;
+        float innerW = innerEnd * scale, midW = (midEnd - innerEnd) * scale, outerW = (boxW - midEnd) * scale;
         float meshHeight = boxH * scale;
-        Side left = new Side(List.copyOf(leftInner), List.copyOf(leftMid), List.copyOf(leftOuter),
-                innerW, midW, outerW, meshHeight);
-        Side right = new Side(List.copyOf(rightInner), List.copyOf(rightMid), List.copyOf(rightOuter),
-                innerW, midW, outerW, meshHeight);
-        DecorativeWingsMod.LOGGER.info("Voxelized {}: {}x{} sculpt={} scale={} pivotY={} cubes={}",
-                spec.texture(), width, height, spec.sculpt(), scale, pivotY, left.cubeCount());
+        Side left = new Side(List.copyOf(leftInner), List.copyOf(leftMid), List.copyOf(leftOuter), innerW, midW, outerW, meshHeight);
+        Side right = new Side(List.copyOf(rightInner), List.copyOf(rightMid), List.copyOf(rightOuter), innerW, midW, outerW, meshHeight);
+
         return new WingVoxelMesh(left, right, width, height, pivotY);
     }
 
@@ -245,74 +234,41 @@ public final class WingVoxelMesh {
                                 List<Cube> rightInner, List<Cube> rightMid, List<Cube> rightOuter,
                                 int x, int y, int rw, int rh, int width, int height, int minY, int minX, int maxX,
                                 float scale, float innerEnd, float midEnd, boolean attachOnRight, float z0, float z1) {
-        float dist = attachOnRight
-                ? (maxX + 0.5F) - (x + rw * 0.5F)
-                : (x + rw * 0.5F) - (minX + 0.5F);
-        List<Cube> leftBone;
-        List<Cube> rightBone;
-        if (dist < innerEnd) {
-            leftBone = leftInner;
-            rightBone = rightInner;
-        } else if (dist < midEnd) {
-            leftBone = leftMid;
-            rightBone = rightMid;
-        } else {
-            leftBone = leftOuter;
-            rightBone = rightOuter;
-        }
+        float dist = attachOnRight ? (maxX + 0.5F) - (x + rw * 0.5F) : (x + rw * 0.5F) - (minX + 0.5F);
+        List<Cube> lb = dist < innerEnd ? leftInner : dist < midEnd ? leftMid : leftOuter;
+        List<Cube> rb = dist < innerEnd ? rightInner : dist < midEnd ? rightMid : rightOuter;
 
-        float y0 = (y - minY) * scale;
-        float y1 = (y + rh - minY) * scale;
-        float u0 = x / (float) width;
-        float v0 = y / (float) height;
-        float u1 = (x + rw) / (float) width;
-        float v1 = (y + rh) / (float) height;
+        float y0 = (y - minY) * scale, y1 = (y + rh - minY) * scale;
+        float u0 = x / (float) width, v0 = y / (float) height, u1 = (x + rw) / (float) width, v1 = (y + rh) / (float) height;
 
         if (attachOnRight) {
-            float leftX0 = (x - maxX - 1) * scale;
-            float leftX1 = (x + rw - maxX - 1) * scale;
-            leftBone.add(new Cube(leftX0, y0, z0, leftX1, y1, z1, u0, v0, u1, v1));
-            float rightX0 = (maxX + 1 - (x + rw)) * scale;
-            float rightX1 = (maxX + 1 - x) * scale;
-            rightBone.add(new Cube(rightX0, y0, z0, rightX1, y1, z1, u1, v0, u0, v1));
+            lb.add(new Cube((x - maxX - 1) * scale, y0, z0, (x + rw - maxX - 1) * scale, y1, z1, u0, v0, u1, v1));
+            rb.add(new Cube((maxX + 1 - (x + rw)) * scale, y0, z0, (maxX + 1 - x) * scale, y1, z1, u1, v0, u0, v1));
         } else {
-            float rightX0 = (x - minX) * scale;
-            float rightX1 = (x + rw - minX) * scale;
-            rightBone.add(new Cube(rightX0, y0, z0, rightX1, y1, z1, u0, v0, u1, v1));
-            float leftX0 = -(x + rw - minX) * scale;
-            float leftX1 = -(x - minX) * scale;
-            leftBone.add(new Cube(leftX0, y0, z0, leftX1, y1, z1, u1, v0, u0, v1));
+            rb.add(new Cube((x - minX) * scale, y0, z0, (x + rw - minX) * scale, y1, z1, u0, v0, u1, v1));
+            lb.add(new Cube(-(x + rw - minX) * scale, y0, z0, -(x - minX) * scale, y1, z1, u1, v0, u0, v1));
         }
     }
 
     private static List<int[]> greedyRects(boolean[][] opaque, int minX, int minY, int maxX, int maxY) {
-        int height = opaque.length;
-        int width = opaque[0].length;
+        int height = opaque.length, width = opaque[0].length;
         boolean[][] visited = new boolean[height][width];
         List<int[]> rects = new ArrayList<>();
         for (int y = minY; y <= maxY; y++) {
             for (int x = minX; x <= maxX; x++) {
-                if (!opaque[y][x] || visited[y][x]) {
-                    continue;
-                }
+                if (!opaque[y][x] || visited[y][x]) continue;
                 int x2 = x;
-                while (x2 + 1 <= maxX && opaque[y][x2 + 1] && !visited[y][x2 + 1]) {
-                    x2++;
-                }
+                while (x2 + 1 <= maxX && opaque[y][x2 + 1] && !visited[y][x2 + 1]) x2++;
                 int y2 = y;
                 grow:
                 while (y2 + 1 <= maxY) {
                     for (int xx = x; xx <= x2; xx++) {
-                        if (!opaque[y2 + 1][xx] || visited[y2 + 1][xx]) {
-                            break grow;
-                        }
+                        if (!opaque[y2 + 1][xx] || visited[y2 + 1][xx]) break grow;
                     }
                     y2++;
                 }
                 for (int yy = y; yy <= y2; yy++) {
-                    for (int xx = x; xx <= x2; xx++) {
-                        visited[yy][xx] = true;
-                    }
+                    for (int xx = x; xx <= x2; xx++) visited[yy][xx] = true;
                 }
                 rects.add(new int[]{x, y, x2 - x + 1, y2 - y + 1});
             }

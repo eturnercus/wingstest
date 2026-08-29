@@ -1,6 +1,5 @@
 package com.decorativewings.client;
 
-import com.decorativewings.WingType;
 import com.decorativewings.network.WingsSyncPayload;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
@@ -12,6 +11,7 @@ import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.entity.LivingEntityRenderer;
 import net.minecraft.client.renderer.entity.RenderLayerParent;
 import net.minecraft.client.renderer.entity.layers.RenderLayer;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 
 public class WingsLayer extends RenderLayer<AbstractClientPlayer, PlayerModel<AbstractClientPlayer>> {
@@ -35,51 +35,59 @@ public class WingsLayer extends RenderLayer<AbstractClientPlayer, PlayerModel<Ab
                                     float limbSwing, float limbSwingAmount, float partialTick, float ageInTicks,
                                     float netHeadYaw, float headPitch) {
         String style = WingsSyncPayload.getStyle(player);
-        String base = WingType.base(style);
-        boolean v1 = WingType.isV1(style);
+        if (style == null || style.isEmpty()) return;
+
         WingAnimator.prune();
         WingAnimator.State anim = WingAnimator.sample(player, limbSwing, limbSwingAmount, ageInTicks, netHeadYaw, headPitch, style);
         int overlay = LivingEntityRenderer.getOverlayCoords(player, 0.0F);
 
-        poseStack.pushPose();
-        model.body.translateAndRotate(poseStack);
-        poseStack.scale(1.0F / 16.0F, 1.0F / 16.0F, 1.0F / 16.0F);
-        if (WingType.MODEL.equals(base)) {
+        // Обработка FBX моделей (если они всё ещё используются)
+        if (style.contains("model")) {
             WingFbxMesh mesh = WingFbxMesh.get();
             VertexConsumer consumer = buffer.getBuffer(RenderType.entitySolid(WingFbxMesh.TEXTURE));
+            poseStack.pushPose();
+            model.body.translateAndRotate(poseStack);
+            poseStack.scale(1.0F / 16.0F, 1.0F / 16.0F, 1.0F / 16.0F);
             poseStack.translate(0.0F, 1.5F, 3.4F);
-            if (v1) {
+
+            boolean isV1 = style.endsWith("_v1");
+            if (isV1) {
                 WingFbxMesh.renderSidePixel(poseStack, consumer, mesh.left, true, anim, packedLight, overlay);
                 WingFbxMesh.renderSidePixel(poseStack, consumer, mesh.right, false, anim, packedLight, overlay);
             } else {
                 WingFbxMesh.renderSide(poseStack, consumer, mesh.left, true, anim, packedLight, overlay);
                 WingFbxMesh.renderSide(poseStack, consumer, mesh.right, false, anim, packedLight, overlay);
             }
+            poseStack.popPose();
+            return;
+        }
+
+        // Работа с Voxel-крыльями через новую систему JSON
+        WingVoxelMesh mesh = WingVoxelMesh.getById(style);
+        if (mesh == null || mesh.left.cubeCount() == 0) {
+            return;
+        }
+
+        // Определяем текстуру для рендера.
+        // Так как ResourceLocation в WingVoxelMesh теперь динамический,
+        // создаем его на основе style или берем из определения.
+        ResourceLocation texture = ResourceLocation.fromNamespaceAndPath("decorativewings", "textures/entity/" + style + ".png");
+        // Примечание: если ID в JSON не совпадает с именем файла, здесь нужно будет
+        // добавить метод в WingVoxelMesh для получения правильного ResourceLocation.
+
+        poseStack.pushPose();
+        model.body.translateAndRotate(poseStack);
+        poseStack.scale(1.0F / 16.0F, 1.0F / 16.0F, 1.0F / 16.0F);
+
+        VertexConsumer consumer = buffer.getBuffer(RenderType.entityCutoutNoCull(texture));
+
+        boolean isV1 = style.endsWith("_v1");
+        if (isV1) {
+            renderWingPixel(poseStack, consumer, mesh, mesh.left, true, anim, packedLight, overlay);
+            renderWingPixel(poseStack, consumer, mesh, mesh.right, false, anim, packedLight, overlay);
         } else {
-            WingVoxelMesh mesh;
-            net.minecraft.resources.ResourceLocation texture;
-            if (WingType.INSECT.equals(base)) {
-                mesh = WingVoxelMesh.insect();
-                texture = WingVoxelMesh.TEXTURE_INSECT;
-            } else if (WingType.BIRD.equals(base)) {
-                mesh = WingVoxelMesh.bird();
-                texture = WingVoxelMesh.TEXTURE_BIRD;
-            } else {
-                mesh = v1 ? WingVoxelMesh.pixels() : WingVoxelMesh.get();
-                texture = WingVoxelMesh.TEXTURE;
-            }
-            if (mesh.left.cubeCount() == 0) {
-                poseStack.popPose();
-                return;
-            }
-            VertexConsumer consumer = buffer.getBuffer(RenderType.entityCutoutNoCull(texture));
-            if (v1) {
-                renderWingPixel(poseStack, consumer, mesh, mesh.left, true, anim, packedLight, overlay);
-                renderWingPixel(poseStack, consumer, mesh, mesh.right, false, anim, packedLight, overlay);
-            } else {
-                renderWing(poseStack, consumer, mesh, mesh.left, true, anim, packedLight, overlay);
-                renderWing(poseStack, consumer, mesh, mesh.right, false, anim, packedLight, overlay);
-            }
+            renderWing(poseStack, consumer, mesh, mesh.left, true, anim, packedLight, overlay);
+            renderWing(poseStack, consumer, mesh, mesh.right, false, anim, packedLight, overlay);
         }
         poseStack.popPose();
     }

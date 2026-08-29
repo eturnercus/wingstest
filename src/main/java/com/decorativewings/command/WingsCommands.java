@@ -1,6 +1,6 @@
 package com.decorativewings.command;
 
-import com.decorativewings.WingType;
+import com.decorativewings.client.WingVoxelMesh;
 import com.decorativewings.network.WingsSyncPayload;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -14,12 +14,15 @@ import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 
+import java.util.List;
+
 public final class WingsCommands {
+    // Теперь подсказки генерируются динамически из списка загруженных JSON
     private static final SuggestionProvider<CommandSourceStack> TYPE_SUGGESTIONS =
-            (context, builder) -> SharedSuggestionProvider.suggest(new String[]{
-                    "sprite", "model", "insect", "bird",
-                    "sprite_v1", "model_v1", "insect_v1", "bird_v1"
-            }, builder);
+            (context, builder) -> {
+                List<String> availableWings = WingVoxelMesh.getAvailableWingIds();
+                return SharedSuggestionProvider.suggest(availableWings, builder);
+            };
 
     private WingsCommands() {
     }
@@ -30,7 +33,7 @@ public final class WingsCommands {
                 .executes(WingsCommands::usage)
                 .then(Commands.literal("give")
                         .then(Commands.argument("player", EntityArgument.player())
-                                .executes(ctx -> give(ctx, WingType.SPRITE))
+                                .executes(ctx -> give(ctx, "wing.png")) // По умолчанию даем базовые крылья
                                 .then(Commands.argument("type", StringArgumentType.word())
                                         .suggests(TYPE_SUGGESTIONS)
                                         .executes(WingsCommands::giveTyped))))
@@ -43,7 +46,7 @@ public final class WingsCommands {
                         .then(Commands.argument("player", EntityArgument.player())
                                 .executes(WingsCommands::remove)))
                 .then(Commands.argument("player", EntityArgument.player())
-                        .executes(ctx -> give(ctx, WingType.SPRITE))
+                        .executes(ctx -> give(ctx, "wing.png"))
                         .then(Commands.argument("type", StringArgumentType.word())
                                 .suggests(TYPE_SUGGESTIONS)
                                 .executes(WingsCommands::giveTyped))));
@@ -56,12 +59,13 @@ public final class WingsCommands {
 
     private static int giveTyped(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
         String raw = StringArgumentType.getString(context, "type");
-        String style = WingType.normalize(raw);
-        if (style == null || style.isEmpty()) {
+
+        // Проверяем, существует ли такой ID в наших загруженных определениях
+        if (!WingVoxelMesh.getAvailableWingIds().contains(raw)) {
             context.getSource().sendFailure(Component.translatable("commands.decorativewings.unknown", raw));
             return 0;
         }
-        return give(context, style);
+        return give(context, raw);
     }
 
     private static int give(CommandContext<CommandSourceStack> context, String style) throws CommandSyntaxException {
@@ -85,7 +89,8 @@ public final class WingsCommands {
                     "commands.decorativewings.none", player.getGameProfile().getName()));
             return 0;
         }
-        WingsSyncPayload.setStyle(player, WingType.NONE);
+        // Устанавливаем пустую строку вместо WingType.NONE
+        WingsSyncPayload.setStyle(player, "");
         context.getSource().sendSuccess(() -> Component.translatable(
                 "commands.decorativewings.remove", player.getGameProfile().getName()), true);
         return 1;

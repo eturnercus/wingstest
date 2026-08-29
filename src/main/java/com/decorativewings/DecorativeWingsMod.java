@@ -2,6 +2,7 @@ package com.decorativewings;
 
 import com.decorativewings.attachment.ModAttachments;
 import com.decorativewings.client.DecorativeWingsClient;
+import com.decorativewings.client.WingVoxelMesh;
 import com.decorativewings.command.WingsCommands;
 import com.decorativewings.network.WingsSyncPayload;
 import com.decorativewings.client.DecorativeWingsClient;
@@ -34,6 +35,7 @@ public class DecorativeWingsMod {
         NeoForge.EVENT_BUS.addListener(DecorativeWingsMod::onChangedDimension);
         if (FMLEnvironment.dist == Dist.CLIENT) {
             AnimationParser.load();
+            WingVoxelMesh.loadDefinitions();
             DecorativeWingsClient.register(modBus);
         }
     }

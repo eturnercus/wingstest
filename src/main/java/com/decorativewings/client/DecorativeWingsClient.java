@@ -37,6 +37,8 @@ public final class DecorativeWingsClient {
             WingVoxelMesh.invalidate();
             WingVoxelMesh.loadDefinitions();
             WingFbxMesh.invalidate();
+            WingFbxMesh.loadDefinitions();
+            WingsTextureManager.invalidate(); // Очищаем текстуры в GPU
         });
     }
 }

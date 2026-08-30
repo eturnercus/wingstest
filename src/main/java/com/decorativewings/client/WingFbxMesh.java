@@ -1,10 +1,12 @@
 package com.decorativewings.client;
 
 import com.decorativewings.DecorativeWingsMod;
+import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.JsonSyntaxException;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.Minecraft;
@@ -12,26 +14,23 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.Resource;
 import net.minecraft.util.Mth;
 
-import java.io.InputStreamReader;
+import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 
 /**
  * Loaded WingsTest.fbx mesh: a left/right pair in YZ, remapped onto the back.
+ * Now supports dynamic loading from JSON definitions.
  */
 public final class WingFbxMesh {
-    public static final ResourceLocation TEXTURE =
-            ResourceLocation.fromNamespaceAndPath(DecorativeWingsMod.MOD_ID, "textures/entity/wing_model.png");
-    public static final ResourceLocation MODEL =
-            ResourceLocation.fromNamespaceAndPath(DecorativeWingsMod.MOD_ID, "models/wing_fbx.json");
+    public static final File CONFIG_WINGS_DIR = new File("config/decorativewings/wings_3d/");
+    public static final File CONFIG_MODELS_DIR = new File("config/decorativewings/models/");
+    public static final File CONFIG_TEXTURES_DIR = new File("config/decorativewings/textures/");
+    private static final Gson GSON = new Gson();
 
-    public record Vert(float x, float y, float z, float u, float v) {
-    }
+    public record Vert(float x, float y, float z, float u, float v) {}
 
-    public record Tri(Vert a, Vert b, Vert c, int bone) {
-    }
+    public record Tri(Vert a, Vert b, Vert c, int bone) {}
 
     public record Side(List<Tri> inner, List<Tri> mid, List<Tri> outer, float innerWidth, float midWidth, float outerWidth) {
         public int triCount() {
@@ -39,128 +38,203 @@ public final class WingFbxMesh {
         }
     }
 
-    private static volatile WingFbxMesh instance;
+    // Definition for the JSON file in wings_3d
+    public record WingFbxDefinition(String id, String modelFile, String texture) {}
+
+    private record Spec(ResourceLocation texture, ResourceLocation model) {}
+
+    private static final Map<Spec, WingFbxMesh> CACHE = new HashMap<>();
+    private static final Map<String, WingFbxDefinition> DEFINITIONS = new HashMap<>();
 
     public final Side left;
     public final Side right;
+    public final ResourceLocation texture;
 
-    private WingFbxMesh(Side left, Side right) {
+    private WingFbxMesh(Side left, Side right, ResourceLocation texture) {
         this.left = left;
         this.right = right;
+        this.texture = texture;
+    }
+
+    /**
+     * Scans the config/decorativewings/wings_3d/ folder for JSON definitions.
+     */
+    public static void loadDefinitions() {
+        DEFINITIONS.clear();
+        if (!CONFIG_WINGS_DIR.exists()) {
+            CONFIG_WINGS_DIR.mkdirs();
+            CONFIG_MODELS_DIR.mkdirs();
+            CONFIG_TEXTURES_DIR.mkdirs();
+        }
+
+        File[] files = CONFIG_WINGS_DIR.listFiles((dir, name) -> name.toLowerCase().endsWith(".json"));
+        if (files != null) {
+            for (File file : files) {
+                try (Reader reader = new FileReader(file)) {
+                    WingFbxDefinition def = GSON.fromJson(reader, WingFbxDefinition.class);
+                    if (def != null && def.id() != null) {
+                        DEFINITIONS.put(def.id(), def);
+                    }
+                } catch (IOException | JsonSyntaxException e) {
+                    DecorativeWingsMod.LOGGER.error("Failed to load FBX wing definition from {}: {}", file.getName(), e.getMessage());
+                }
+            }
+        }
+    }
+
+    public static List<String> getAvailableWingIds() {
+        return new ArrayList<>(DEFINITIONS.keySet());
+    }
+
+    public static WingFbxMesh getById(String id) {
+        WingFbxDefinition def = DEFINITIONS.get(id);
+        if (def == null) {
+            DecorativeWingsMod.LOGGER.error("FBX wing definition not found for id: {}", id);
+            return empty();
+        }
+
+        ResourceLocation modelLoc = ResourceLocation.fromNamespaceAndPath(DecorativeWingsMod.MOD_ID, "dynamic_fbx_models/" + def.modelFile());
+        ResourceLocation texLoc = ResourceLocation.fromNamespaceAndPath(DecorativeWingsMod.MOD_ID, "dynamic_fbx_textures/" + def.texture());
+
+        return get(texLoc, modelLoc);
     }
 
     public static void invalidate() {
-        instance = null;
+        CACHE.clear();
+        DEFINITIONS.clear();
     }
 
-    public static WingFbxMesh get() {
-        WingFbxMesh mesh = instance;
-        if (mesh == null) {
-            mesh = load();
-            instance = mesh;
+    public static WingFbxMesh get(ResourceLocation texture, ResourceLocation model) {
+        Spec spec = new Spec(texture, model);
+        return CACHE.computeIfAbsent(spec, WingFbxMesh::build);
+    }
+
+    private static WingFbxMesh build(Spec spec) {
+        String path = spec.model().getPath();
+        String modelFileName = path.substring(path.lastIndexOf('/') + 1);
+        File modelFile = new File(CONFIG_MODELS_DIR, modelFileName);
+
+        // Загружаем текстуру ОДИН РАЗ при сборке меша
+        String texPath = spec.texture().getPath();
+        String texFileName = texPath.substring(texPath.lastIndexOf('/') + 1);
+        ResourceLocation finalTex = WingsTextureManager.loadTexture(CONFIG_TEXTURES_DIR, texFileName);
+
+        if (finalTex == null) {
+            finalTex = spec.texture(); // fallback
         }
-        return mesh;
-    }
 
-    private static WingFbxMesh load() {
-        Optional<Resource> resource = Minecraft.getInstance().getResourceManager().getResource(MODEL);
+        if (modelFile.exists()) {
+            try (var reader = new InputStreamReader(new FileInputStream(modelFile), StandardCharsets.UTF_8)) {
+                return loadFromJson(reader, finalTex);
+            } catch (IOException exception) {
+                DecorativeWingsMod.LOGGER.error("Failed to load FBX model from config: {}", modelFileName, exception);
+            } catch (Exception e) {
+                DecorativeWingsMod.LOGGER.error("Failed to load FBX model from config: {}", modelFileName, e);
+            }
+        }
+
+        Optional<Resource> resource = Minecraft.getInstance().getResourceManager().getResource(spec.model());
         if (resource.isEmpty()) {
-            DecorativeWingsMod.LOGGER.error("Missing {}", MODEL);
+            DecorativeWingsMod.LOGGER.error("Missing FBX model {} and no config override found", spec.model());
             return empty();
         }
         try (var reader = new InputStreamReader(resource.get().open(), StandardCharsets.UTF_8)) {
-            JsonObject root = JsonParser.parseReader(reader).getAsJsonObject();
-            float maxz = root.get("maxz").getAsFloat();
-            JsonArray trisJson = root.getAsJsonArray("tris");
-            float extra = 1.75F;
-            List<float[]> packed = new ArrayList<>();
-            float minAbsX = Float.MAX_VALUE;
-            float maxAbsX = 0.0F;
-            float minYp = Float.MAX_VALUE;
-            float maxYp = -Float.MAX_VALUE;
-            for (JsonElement el : trisJson) {
-                JsonArray v = el.getAsJsonObject().getAsJsonArray("v");
-                float[] row = new float[9];
-                for (int i = 0; i < 3; i++) {
-                    JsonArray p = v.get(i).getAsJsonArray();
-                    float ox = p.get(0).getAsFloat();
-                    float oy = p.get(1).getAsFloat();
-                    float oz = p.get(2).getAsFloat();
-                    float x = oy * extra;
-                    float y = (maxz - oz) * extra * 1.12F;
-                    float z = ox * extra * 0.07F;
-                    row[i * 3] = x;
-                    row[i * 3 + 1] = y;
-                    row[i * 3 + 2] = z;
-                    minAbsX = Math.min(minAbsX, Math.abs(x));
-                    maxAbsX = Math.max(maxAbsX, Math.abs(x));
-                    minYp = Math.min(minYp, y);
-                    maxYp = Math.max(maxYp, y);
-                }
-                packed.add(row);
-            }
-            float spanU = Math.max(1.0E-5F, maxAbsX - minAbsX);
-            float spanV = Math.max(1.0E-5F, maxYp - minYp);
-
-            List<Tri> leftInner = new ArrayList<>();
-            List<Tri> leftMid = new ArrayList<>();
-            List<Tri> leftOuter = new ArrayList<>();
-            List<Tri> rightInner = new ArrayList<>();
-            List<Tri> rightMid = new ArrayList<>();
-            List<Tri> rightOuter = new ArrayList<>();
-            float maxSpan = 0.0F;
-            for (float[] row : packed) {
-                Vert[] verts = new Vert[3];
-                float cx = 0.0F;
-                for (int i = 0; i < 3; i++) {
-                    float x = row[i * 3];
-                    float y = row[i * 3 + 1];
-                    float z = row[i * 3 + 2];
-                    float u = Mth.clamp((Math.abs(x) - minAbsX) / spanU, 0.0F, 1.0F);
-                    float tv = Mth.clamp((y - minYp) / spanV, 0.0F, 1.0F);
-                    verts[i] = new Vert(x, y, z, u, tv);
-                    cx += x;
-                }
-                cx /= 3.0F;
-                maxSpan = Math.max(maxSpan, Math.abs(cx));
-                int bone;
-                float dist = Math.abs(cx);
-                if (dist < 2.4F * extra) {
-                    bone = 0;
-                } else if (dist < 4.8F * extra) {
-                    bone = 1;
-                } else {
-                    bone = 2;
-                }
-                Tri tri = new Tri(verts[0], verts[1], verts[2], bone);
-                List<Tri> bucket;
-                boolean left = cx < 0.0F;
-                if (bone == 0) {
-                    bucket = left ? leftInner : rightInner;
-                } else if (bone == 1) {
-                    bucket = left ? leftMid : rightMid;
-                } else {
-                    bucket = left ? leftOuter : rightOuter;
-                }
-                bucket.add(tri);
-            }
-            DecorativeWingsMod.LOGGER.info("FBX wings: {} tris, span {}", packed.size(), maxSpan);
-            float innerW = 2.4F * extra;
-            float midW = 2.4F * extra;
-            float outerW = Math.max(0.5F, maxSpan - innerW - midW);
-            return new WingFbxMesh(
-                    new Side(List.copyOf(leftInner), List.copyOf(leftMid), List.copyOf(leftOuter), innerW, midW, outerW),
-                    new Side(List.copyOf(rightInner), List.copyOf(rightMid), List.copyOf(rightOuter), innerW, midW, outerW)
-            );
+            return loadFromJson(reader, spec.texture());
         } catch (Exception exception) {
-            DecorativeWingsMod.LOGGER.error("Failed to load FBX wing mesh", exception);
+            DecorativeWingsMod.LOGGER.error("Failed to parse FBX wing mesh", exception);
             return empty();
         }
+    }
+
+    private static WingFbxMesh loadFromJson(Reader reader, ResourceLocation texture) throws Exception {
+        JsonObject root = JsonParser.parseReader(reader).getAsJsonObject();
+        float maxz = root.get("maxz").getAsFloat();
+        JsonArray trisJson = root.getAsJsonArray("tris");
+        float extra = 1.75F;
+        List<float[]> packed = new ArrayList<>();
+        float minAbsX = Float.MAX_VALUE;
+        float maxAbsX = 0.0F;
+        float minYp = Float.MAX_VALUE;
+        float maxYp = -Float.MAX_VALUE;
+        for (JsonElement el : trisJson) {
+            JsonArray v = el.getAsJsonObject().getAsJsonArray("v");
+            float[] row = new float[9];
+            for (int i = 0; i < 3; i++) {
+                JsonArray p = v.get(i).getAsJsonArray();
+                float ox = p.get(0).getAsFloat();
+                float oy = p.get(1).getAsFloat();
+                float oz = p.get(2).getAsFloat();
+                float x = oy * extra;
+                float y = (maxz - oz) * extra * 1.12F;
+                float z = ox * extra * 0.07F;
+                row[i * 3] = x;
+                row[i * 3 + 1] = y;
+                row[i * 3 + 2] = z;
+                minAbsX = Math.min(minAbsX, Math.abs(x));
+                maxAbsX = Math.max(maxAbsX, Math.abs(x));
+                minYp = Math.min(minYp, y);
+                maxYp = Math.max(maxYp, y);
+            }
+            packed.add(row);
+        }
+        float spanU = Math.max(1.0E-5F, maxAbsX - minAbsX);
+        float spanV = Math.max(1.0E-5F, maxYp - minYp);
+
+        List<Tri> leftInner = new ArrayList<>();
+        List<Tri> leftMid = new ArrayList<>();
+        List<Tri> leftOuter = new ArrayList<>();
+        List<Tri> rightInner = new ArrayList<>();
+        List<Tri> rightMid = new ArrayList<>();
+        List<Tri> rightOuter = new ArrayList<>();
+        float maxSpan = 0.0F;
+        for (float[] row : packed) {
+            Vert[] verts = new Vert[3];
+            float cx = 0.0F;
+            for (int i = 0; i < 3; i++) {
+                float x = row[i * 3];
+                float y = row[i * 3 + 1];
+                float z = row[i * 3 + 2];
+                float u = Mth.clamp((Math.abs(x) - minAbsX) / spanU, 0.0F, 1.0F);
+                float tv = Mth.clamp((y - minYp) / spanV, 0.0F, 1.0F);
+                verts[i] = new Vert(x, y, z, u, tv);
+                cx += x;
+            }
+            cx /= 3.0F;
+            maxSpan = Math.max(maxSpan, Math.abs(cx));
+            int bone;
+            float dist = Math.abs(cx);
+            if (dist < 2.4F * extra) {
+                bone = 0;
+            } else if (dist < 4.8F * extra) {
+                bone = 1;
+            } else {
+                bone = 2;
+            }
+            Tri tri = new Tri(verts[0], verts[1], verts[2], bone);
+            List<Tri> bucket;
+            boolean left = cx < 0.0F;
+            if (bone == 0) {
+                bucket = left ? leftInner : rightInner;
+            } else if (bone == 1) {
+                bucket = left ? leftMid : rightMid;
+            } else {
+                bucket = left ? leftOuter : rightOuter;
+            }
+            bucket.add(tri);
+        }
+        float innerW = 2.4F * extra;
+        float midW = 2.4F * extra;
+        float outerW = Math.max(0.5F, maxSpan - innerW - midW);
+        return new WingFbxMesh(
+                new Side(List.copyOf(leftInner), List.copyOf(leftMid), List.copyOf(leftOuter), innerW, midW, outerW),
+                new Side(List.copyOf(rightInner), List.copyOf(rightMid), List.copyOf(rightOuter), innerW, midW, outerW),
+                texture
+        );
     }
 
     private static WingFbxMesh empty() {
         Side empty = new Side(List.of(), List.of(), List.of(), 1.0F, 1.0F, 1.0F);
-        return new WingFbxMesh(empty, empty);
+        return new WingFbxMesh(empty, empty, ResourceLocation.fromNamespaceAndPath("minecraft", "empty"));
     }
 
     public static void renderSide(PoseStack poseStack, VertexConsumer consumer, Side side, boolean left,

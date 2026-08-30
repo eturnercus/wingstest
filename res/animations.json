@@ -25,7 +25,7 @@
         "flapAmp": 2.0
       }
     },
-    "bird": {
+    "wings_bird_v1": {
       "default": {
         "beatRate": 0.095,
         "spread": 9.0,

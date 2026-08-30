@@ -2,7 +2,7 @@ package com.decorativewings.client;
 
 public record WingDefinition(
     String id,
-    String textureFile,
+    String texture,
     boolean sculpt,
     boolean attachOnRight,
     float targetHeight,

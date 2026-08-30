@@ -11,9 +11,7 @@ import net.minecraft.util.FastColor;
 import net.minecraft.util.Mth;
 
 import java.io.*;
-import java.nio.file.Files;
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Builds wings from a 2D sprite. Now supports dynamic loading from JSON definitions.
@@ -39,13 +37,15 @@ public final class WingVoxelMesh {
 
     public final Side left;
     public final Side right;
+    public final ResourceLocation texture;
     public final int textureWidth;
     public final int textureHeight;
     public final float pivotY;
 
-    private WingVoxelMesh(Side left, Side right, int textureWidth, int textureHeight, float pivotY) {
+    private WingVoxelMesh(Side left, Side right, ResourceLocation texture, int textureWidth, int textureHeight, float pivotY) {
         this.left = left;
         this.right = right;
+        this.texture = texture;
         this.textureWidth = textureWidth;
         this.textureHeight = textureHeight;
         this.pivotY = pivotY;
@@ -89,7 +89,7 @@ public final class WingVoxelMesh {
         }
 
         // We use a ResourceLocation as a key for the cache, mapping it to the texture file name
-        ResourceLocation loc = ResourceLocation.fromNamespaceAndPath(DecorativeWingsMod.MOD_ID, "dynamic/" + def.textureFile());
+        ResourceLocation loc = ResourceLocation.fromNamespaceAndPath(DecorativeWingsMod.MOD_ID, "dynamic/" + def.texture());
         return get(loc, def.sculpt(), def.attachOnRight(), def.targetHeight(), def.perPixel());
     }
 
@@ -108,9 +108,14 @@ public final class WingVoxelMesh {
         String fileName = spec.texture().getPath().substring(spec.texture().getPath().lastIndexOf('/') + 1);
         File configFile = new File(CONFIG_TEXTURES_DIR, fileName);
 
+        ResourceLocation finalTex = WingsTextureManager.loadTexture(CONFIG_TEXTURES_DIR, fileName);
+        if (finalTex == null) {
+            finalTex = spec.texture();
+        }
+
         if (configFile.exists()) {
             try (InputStream stream = new FileInputStream(configFile); NativeImage image = NativeImage.read(stream)) {
-                return voxelize(image, spec);
+                return voxelize(image, spec, finalTex);
             } catch (IOException exception) {
                 DecorativeWingsMod.LOGGER.error("Failed to load wing texture from config: {}", fileName, exception);
             }
@@ -122,19 +127,20 @@ public final class WingVoxelMesh {
             return empty();
         }
         try (InputStream stream = resource.get().open(); NativeImage image = NativeImage.read(stream)) {
-            return voxelize(image, spec);
+            return voxelize(image, spec, finalTex);
         } catch (Exception exception) {
             DecorativeWingsMod.LOGGER.error("Failed to voxelize wing texture", exception);
             return empty();
         }
     }
 
+
     private static WingVoxelMesh empty() {
         Side empty = new Side(List.of(), List.of(), List.of(), 0.1F, 0.1F, 0.1F, 1.0F);
-        return new WingVoxelMesh(empty, empty, 1, 1, 0.0F);
+        return new WingVoxelMesh(empty, empty, ResourceLocation.fromNamespaceAndPath("minecraft", "empty"), 1, 1, 0.0F);
     }
 
-    private static WingVoxelMesh voxelize(NativeImage image, Spec spec) {
+    private static WingVoxelMesh voxelize(NativeImage image, Spec spec, ResourceLocation texture) {
         int width = image.getWidth();
         int height = image.getHeight();
         boolean[][] opaque = new boolean[height][width];
@@ -227,7 +233,7 @@ public final class WingVoxelMesh {
         Side left = new Side(List.copyOf(leftInner), List.copyOf(leftMid), List.copyOf(leftOuter), innerW, midW, outerW, meshHeight);
         Side right = new Side(List.copyOf(rightInner), List.copyOf(rightMid), List.copyOf(rightOuter), innerW, midW, outerW, meshHeight);
 
-        return new WingVoxelMesh(left, right, width, height, pivotY);
+        return new WingVoxelMesh(left, right, texture, width, height, pivotY);
     }
 
     private static void addCube(List<Cube> leftInner, List<Cube> leftMid, List<Cube> leftOuter,

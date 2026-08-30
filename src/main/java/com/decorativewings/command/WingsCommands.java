@@ -1,5 +1,6 @@
 package com.decorativewings.command;
 
+import com.decorativewings.client.WingFbxMesh;
 import com.decorativewings.client.WingVoxelMesh;
 import com.decorativewings.network.WingsSyncPayload;
 import com.mojang.brigadier.CommandDispatcher;
@@ -21,6 +22,7 @@ public final class WingsCommands {
     private static final SuggestionProvider<CommandSourceStack> TYPE_SUGGESTIONS =
             (context, builder) -> {
                 List<String> availableWings = WingVoxelMesh.getAvailableWingIds();
+                availableWings.addAll(WingFbxMesh.getAvailableWingIds());
                 return SharedSuggestionProvider.suggest(availableWings, builder);
             };
 
@@ -61,7 +63,7 @@ public final class WingsCommands {
         String raw = StringArgumentType.getString(context, "type");
 
         // Проверяем, существует ли такой ID в наших загруженных определениях
-        if (!WingVoxelMesh.getAvailableWingIds().contains(raw)) {
+        if (!WingVoxelMesh.getAvailableWingIds().contains(raw) && !WingFbxMesh.getAvailableWingIds().contains(raw)) {
             context.getSource().sendFailure(Component.translatable("commands.decorativewings.unknown", raw));
             return 0;
         }

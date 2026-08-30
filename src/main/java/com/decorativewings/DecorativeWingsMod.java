@@ -1,12 +1,9 @@
 package com.decorativewings;
 
 import com.decorativewings.attachment.ModAttachments;
-import com.decorativewings.client.DecorativeWingsClient;
-import com.decorativewings.client.WingVoxelMesh;
+import com.decorativewings.client.*;
 import com.decorativewings.command.WingsCommands;
 import com.decorativewings.network.WingsSyncPayload;
-import com.decorativewings.client.DecorativeWingsClient;
-import com.decorativewings.client.AnimationParser;
 import com.decorativewings.command.WingsCommands;
 import com.mojang.logging.LogUtils;
 import net.neoforged.api.distmarker.Dist;
@@ -36,6 +33,9 @@ public class DecorativeWingsMod {
         if (FMLEnvironment.dist == Dist.CLIENT) {
             AnimationParser.load();
             WingVoxelMesh.loadDefinitions();
+            WingFbxMesh.loadDefinitions();
+            WingsTextureManager.invalidate();
+
             DecorativeWingsClient.register(modBus);
         }
     }

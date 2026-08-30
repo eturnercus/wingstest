@@ -1,5 +1,6 @@
 package com.decorativewings.client;
 
+import com.decorativewings.DecorativeWingsMod;
 import com.decorativewings.network.WingsSyncPayload;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
@@ -41,45 +42,43 @@ public class WingsLayer extends RenderLayer<AbstractClientPlayer, PlayerModel<Ab
         WingAnimator.State anim = WingAnimator.sample(player, limbSwing, limbSwingAmount, ageInTicks, netHeadYaw, headPitch, style);
         int overlay = LivingEntityRenderer.getOverlayCoords(player, 0.0F);
 
-        // Обработка FBX моделей (если они всё ещё используются)
+        // Обработка FBX моделей
         if (style.contains("model")) {
-            WingFbxMesh mesh = WingFbxMesh.get();
-            VertexConsumer consumer = buffer.getBuffer(RenderType.entitySolid(WingFbxMesh.TEXTURE));
+            WingFbxMesh mesh = WingFbxMesh.getById(style);
+            if (mesh == null) return;
+
+            // Теперь просто берем уже загруженную текстуру из меша
+            ResourceLocation texture = mesh.texture;
+
+            VertexConsumer consumer = buffer.getBuffer(RenderType.entitySolid(texture));
             poseStack.pushPose();
+
+            // ОБЯЗАТЕЛЬНО: привязка к телу и масштаб
             model.body.translateAndRotate(poseStack);
             poseStack.scale(1.0F / 16.0F, 1.0F / 16.0F, 1.0F / 16.0F);
-            poseStack.translate(0.0F, 1.5F, 3.4F);
 
-            boolean isV1 = style.endsWith("_v1");
-            if (isV1) {
-                WingFbxMesh.renderSidePixel(poseStack, consumer, mesh.left, true, anim, packedLight, overlay);
-                WingFbxMesh.renderSidePixel(poseStack, consumer, mesh.right, false, anim, packedLight, overlay);
-            } else {
-                WingFbxMesh.renderSide(poseStack, consumer, mesh.left, true, anim, packedLight, overlay);
-                WingFbxMesh.renderSide(poseStack, consumer, mesh.right, false, anim, packedLight, overlay);
-            }
+            WingFbxMesh.renderSide(poseStack, consumer, mesh.left, true, anim, packedLight, overlay);
+            WingFbxMesh.renderSide(poseStack, consumer, mesh.right, false, anim, packedLight, overlay);
+
             poseStack.popPose();
             return;
         }
 
-        // Работа с Voxel-крыльями через новую систему JSON
+        // Работа с Voxel-крыльями
         WingVoxelMesh mesh = WingVoxelMesh.getById(style);
         if (mesh == null || mesh.left.cubeCount() == 0) {
             return;
         }
 
-        // Определяем текстуру для рендера.
-        // Так как ResourceLocation в WingVoxelMesh теперь динамический,
-        // создаем его на основе style или берем из определения.
-        ResourceLocation texture = ResourceLocation.fromNamespaceAndPath("decorativewings", "textures/entity/" + style + ".png");
-        // Примечание: если ID в JSON не совпадает с именем файла, здесь нужно будет
-        // добавить метод в WingVoxelMesh для получения правильного ResourceLocation.
-
         poseStack.pushPose();
         model.body.translateAndRotate(poseStack);
         poseStack.scale(1.0F / 16.0F, 1.0F / 16.0F, 1.0F / 16.0F);
 
-        VertexConsumer consumer = buffer.getBuffer(RenderType.entityCutoutNoCull(texture));
+        // Подгружаем текстуру из config/decorativewings/textures/
+        //- Извлекаем имя файла из ResourceLocation меша (так как getById создает его на основе def.texture())
+        ResourceLocation texture = mesh.texture;
+
+        VertexConsumer consumer = buffer.getBuffer(RenderType.entitySolid(texture));
 
         boolean isV1 = style.endsWith("_v1");
         if (isV1) {

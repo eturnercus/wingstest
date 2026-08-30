@@ -17,7 +17,6 @@ public final class WingAnimator {
         public float flap, spread, fold, sway, stretch, twist, pitch, bank, turn;
         public float takeoff, landing, curl, dihedral, flutter, wave, billow;
         public float phase, phase2, lastYaw, lastAge, baseYaw;
-        public int kind;
         public boolean wasFlying, initialized;
         public int lastTick;
     }
@@ -42,15 +41,15 @@ public final class WingAnimator {
         float localStrafe = (float) (motion.x * Mth.cos(yawRad) - motion.z * Mth.sin(yawRad));
         float horiz = (float) Math.hypot(motion.x, motion.z);
         float vert = (float) motion.y;
+        float yawDelta = Mth.clamp(Mth.wrapDegrees(player.getYRot() - state.lastYaw), -12.0F, 12.0F);
+        state.lastYaw = player.getYRot();
+
+        boolean flying = player.getAbilities().flying;
 
         if (!state.initialized) {
             state.lastYaw = player.getYRot();
             state.initialized = true;
         }
-        float yawDelta = Mth.clamp(Mth.wrapDegrees(player.getYRot() - state.lastYaw), -12.0F, 12.0F);
-        state.lastYaw = player.getYRot();
-
-        boolean flying = player.getAbilities().flying;
         boolean elytra = player.isFallFlying() || player.getPose() == Pose.FALL_FLYING;
         boolean onGround = player.onGround();
         boolean airborne = !onGround && !flying && !elytra && !player.isInWater() && !player.isPassenger();
@@ -97,12 +96,15 @@ public final class WingAnimator {
         float targetDihedral = p.dihedral;
         float targetFlutter = p.flutter;
 
-        // Adjustments for specific wings types (Insect/Bird)
-        state.kind = WingType.kind(style);
-        if (state.kind == WingType.KIND_INSECT) {
-            beatRate *= 2.0f;
-            targetFlutter *= 2.0f;
+        // Use previously unused variables for more dynamic motion
+        if (stateKey.equals("walk") || stateKey.equals("sprint")) {
+            targetSway += Mth.sin(limbSwing * 0.5F) * limbSwingAmount * 5.0F;
+            targetFlap += Mth.cos(limbSwing * 0.5F) * limbSwingAmount * 2.0F;
         }
+
+        targetPitch += headPitch * 0.1F;
+        targetBank += (netHeadYaw - player.getYRot()) * 0.05F;
+        targetBank += yawDelta * 2.0F;
 
         // Apply V1 multiplier if applicable
         if (WingType.isV1(style)) {

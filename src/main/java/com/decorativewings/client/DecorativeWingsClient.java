@@ -16,6 +16,10 @@ public final class DecorativeWingsClient {
 
     public static void register(IEventBus modBus) {
         WingsClientOptions.load();
+
+        // Initialize config manager
+        WingConfigManager.getInstance().load();
+
         modBus.addListener(DecorativeWingsClient::addLayers);
         modBus.addListener(DecorativeWingsClient::onReload);
         NeoForge.EVENT_BUS.addListener(WingsClientCommands::register);
@@ -33,12 +37,10 @@ public final class DecorativeWingsClient {
 
     private static void onReload(RegisterClientReloadListenersEvent event) {
         event.registerReloadListener((ResourceManagerReloadListener) manager -> {
-            com.decorativewings.client.AnimationParser.load();
-            WingVoxelMesh.invalidate();
-            WingVoxelMesh.loadDefinitions();
-            WingFbxMesh.invalidate();
-            WingFbxMesh.loadDefinitions();
-            WingsTextureManager.invalidate(); // Очищаем текстуры в GPU
+            // Unified reload process
+            WingConfigManager.getInstance().load();
+            WingMeshProvider.invalidate();
+            WingsTextureManager.invalidate();
         });
     }
 }

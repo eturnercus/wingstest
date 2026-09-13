@@ -1,7 +1,5 @@
-
 package com.decorativewings.client;
 
-import com.decorativewings.WingType;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.player.Player;
@@ -78,7 +76,7 @@ public final class WingAnimator {
         else if (player.isSprinting() && onGround) stateKey = "sprint";
         else if (limbSwingAmount > 0.08F && onGround) stateKey = "walk";
 
-        AnimationConfig.StateParams p = AnimationParser.getParams(style, stateKey);
+        AnimationConfig.StateParams p = WingConfigManager.getInstance().getParams(style, stateKey);
 
         float beatRate = p.beatRate;
         float snap = p.snap;
@@ -105,14 +103,6 @@ public final class WingAnimator {
         targetPitch += headPitch * 0.1F;
         targetBank += (netHeadYaw - player.getYRot()) * 0.05F;
         targetBank += yawDelta * 2.0F;
-
-        // Apply V1 multiplier if applicable
-        if (WingType.isV1(style)) {
-            float amp = 2.2F;
-            targetFlap *= amp;
-            targetSway *= amp;
-            beatRate *= 1.5f;
-        }
 
         // Landing override
         if (state.landing > 0.04F) {

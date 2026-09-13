@@ -1,7 +1,6 @@
 package com.decorativewings.network;
 
 import com.decorativewings.DecorativeWingsMod;
-import com.decorativewings.WingType;
 import com.decorativewings.attachment.ModAttachments;
 import io.netty.buffer.ByteBuf;
 import net.minecraft.network.codec.ByteBufCodecs;
@@ -44,7 +43,7 @@ public record WingsSyncPayload(int entityId, String style) implements CustomPack
     }
 
     public static boolean hasWings(Player player) {
-        return WingType.isSet(getStyle(player));
+        return !getStyle(player).isEmpty();
     }
 
     public static void setStyle(Player player, String style) {
@@ -53,7 +52,7 @@ public record WingsSyncPayload(int entityId, String style) implements CustomPack
     }
 
     public static void setWings(Player player, boolean value) {
-        setStyle(player, value ? WingType.SPRITE : WingType.NONE);
+        setStyle(player, value ? "wing.png" : "");
     }
 
     public static void syncToTracking(Entity entity) {
@@ -69,7 +68,7 @@ public record WingsSyncPayload(int entityId, String style) implements CustomPack
             return;
         }
         String style = getStyle(player);
-        if (!WingType.isSet(style)) {
+        if (style == null || style.isEmpty()) {
             return;
         }
         PacketDistributor.sendToPlayer(serverPlayer, new WingsSyncPayload(player.getId(), style));

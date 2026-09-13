@@ -1,7 +1,6 @@
 package com.decorativewings.command;
 
-import com.decorativewings.client.WingFbxMesh;
-import com.decorativewings.client.WingVoxelMesh;
+import com.decorativewings.client.WingMeshProvider;
 import com.decorativewings.network.WingsSyncPayload;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -18,11 +17,9 @@ import net.minecraft.server.level.ServerPlayer;
 import java.util.List;
 
 public final class WingsCommands {
-    // Теперь подсказки генерируются динамически из списка загруженных JSON
     private static final SuggestionProvider<CommandSourceStack> TYPE_SUGGESTIONS =
             (context, builder) -> {
-                List<String> availableWings = WingVoxelMesh.getAvailableWingIds();
-                availableWings.addAll(WingFbxMesh.getAvailableWingIds());
+                List<String> availableWings = WingMeshProvider.getAvailableIds();
                 return SharedSuggestionProvider.suggest(availableWings, builder);
             };
 
@@ -35,7 +32,7 @@ public final class WingsCommands {
                 .executes(WingsCommands::usage)
                 .then(Commands.literal("give")
                         .then(Commands.argument("player", EntityArgument.player())
-                                .executes(ctx -> give(ctx, "wing.png")) // По умолчанию даем базовые крылья
+                                .executes(ctx -> give(ctx, "wing.png")) // Default
                                 .then(Commands.argument("type", StringArgumentType.word())
                                         .suggests(TYPE_SUGGESTIONS)
                                         .executes(WingsCommands::giveTyped))))
@@ -62,8 +59,7 @@ public final class WingsCommands {
     private static int giveTyped(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
         String raw = StringArgumentType.getString(context, "type");
 
-        // Проверяем, существует ли такой ID в наших загруженных определениях
-        if (!WingVoxelMesh.getAvailableWingIds().contains(raw) && !WingFbxMesh.getAvailableWingIds().contains(raw)) {
+        if (!WingMeshProvider.getAvailableIds().contains(raw)) {
             context.getSource().sendFailure(Component.translatable("commands.decorativewings.unknown", raw));
             return 0;
         }
@@ -91,7 +87,6 @@ public final class WingsCommands {
                     "commands.decorativewings.none", player.getGameProfile().getName()));
             return 0;
         }
-        // Устанавливаем пустую строку вместо WingType.NONE
         WingsSyncPayload.setStyle(player, "");
         context.getSource().sendSuccess(() -> Component.translatable(
                 "commands.decorativewings.remove", player.getGameProfile().getName()), true);
